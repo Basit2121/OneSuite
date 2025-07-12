@@ -7,7 +7,7 @@ import { toast } from "@/hooks/use-toast"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Mic, MicOff, Video, VideoOff, PhoneOff, Users } from "lucide-react"
+import { Mic, MicOff, Video, VideoOff, PhoneOff, Users, Copy, LogOut } from "lucide-react"
 import Peer from "simple-peer"
 
 interface PeerConnection {
@@ -34,6 +34,7 @@ export default function MeetingRoom({ params }: { params: Promise<{ meetingId: s
   const [isGuest, setIsGuest] = useState(false)
   const [guestName, setGuestName] = useState("")
   const [showGuestForm, setShowGuestForm] = useState(false)
+  const [meetingEnded, setMeetingEnded] = useState(false)
 
   // Authentication check
   useEffect(() => {
@@ -150,6 +151,54 @@ export default function MeetingRoom({ params }: { params: Promise<{ meetingId: s
     }
   }
 
+  const copyInviteUrl = () => {
+    const inviteUrl = `${window.location.origin}/meetings/${meetingId}`
+    navigator.clipboard.writeText(inviteUrl).then(() => {
+      toast({
+        title: "Invite URL copied!",
+        description: "Share this link with others to join the meeting."
+      })
+    }).catch(() => {
+      toast({
+        variant: "destructive",
+        title: "Failed to copy",
+        description: "Could not copy invite URL to clipboard."
+      })
+    })
+  }
+
+  const handleEndMeeting = async () => {
+    if (!moderatorStatus?.is_moderator) return
+    
+    try {
+      await api.endMeeting(meetingId)
+      toast({
+        title: "Meeting ended",
+        description: "The meeting has been ended for all participants."
+      })
+      setMeetingEnded(true)
+      
+      // Cleanup and redirect
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop())
+      }
+      peers.forEach(peerConnection => {
+        peerConnection.peer.destroy()
+      })
+      
+      setTimeout(() => {
+        router.push('/meetings')
+      }, 2000)
+    } catch (error) {
+      console.error('Error ending meeting:', error)
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to end the meeting."
+      })
+    }
+  }
+
   const toggleAudio = () => {
     if (localStream) {
       const audioTrack = localStream.getAudioTracks()[0]
@@ -187,6 +236,57 @@ export default function MeetingRoom({ params }: { params: Promise<{ meetingId: s
       window.removeEventListener("beforeunload", handleUnload)
     }
   }, [meetingId])
+
+  // Check if meeting ended (polling)
+  useEffect(() => {
+    if (!meetingId || meetingEnded) return
+
+    const checkMeetingStatus = async () => {
+      try {
+        const meeting = await api.getMeeting(meetingId)
+        if (meeting.status === 'ended') {
+          setMeetingEnded(true)
+          toast({
+            title: "Meeting ended",
+            description: "The moderator has ended this meeting."
+          })
+          
+          // Cleanup
+          if (localStream) {
+            localStream.getTracks().forEach(track => track.stop())
+          }
+          peers.forEach(peerConnection => {
+            peerConnection.peer.destroy()
+          })
+          
+          setTimeout(() => {
+            router.push('/meetings')
+          }, 3000)
+        }
+      } catch (error) {
+        console.error('Error checking meeting status:', error)
+      }
+    }
+
+    const interval = setInterval(checkMeetingStatus, 5000) // Check every 5 seconds
+    return () => clearInterval(interval)
+  }, [meetingId, meetingEnded, localStream, peers, router])
+
+  if (meetingEnded) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-gray-50">
+        <Card className="w-full max-w-md text-center">
+          <CardContent className="pt-6">
+            <h2 className="text-xl font-semibold mb-2">Meeting Ended</h2>
+            <p className="text-gray-600 mb-4">This meeting has been ended by the moderator.</p>
+            <Button onClick={() => router.push('/meetings')}>
+              Return to Meetings
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
 
   if (!username && showGuestForm) {
     return (
@@ -239,6 +339,30 @@ export default function MeetingRoom({ params }: { params: Promise<{ meetingId: s
         <span className="text-sm">Meeting: {meetingId}</span>
         {moderatorStatus?.is_moderator && (
           <span className="text-xs bg-yellow-600 px-2 py-1 rounded">Moderator</span>
+        )}
+      </div>
+
+      {/* Invite button */}
+      <div className="absolute top-4 right-4 z-10 flex gap-2">
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={copyInviteUrl}
+          className="bg-black/50 text-white hover:bg-black/70"
+        >
+          <Copy className="h-4 w-4 mr-2" />
+          Copy Invite
+        </Button>
+        {moderatorStatus?.is_moderator && (
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={handleEndMeeting}
+            className="bg-red-600/80 hover:bg-red-600"
+          >
+            <LogOut className="h-4 w-4 mr-2" />
+            End Meeting
+          </Button>
         )}
       </div>
 

@@ -51,7 +51,8 @@ export async function POST(
       UPDATE meetings SET 
       ended_at = ${endedAt}, 
       duration_seconds = ${durationSeconds}, 
-      current_participants = 0 
+      current_participants = 0,
+      status = 'ended'
       WHERE id = ${meetingId}
     `
     

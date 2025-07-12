@@ -19,8 +19,14 @@ async function ensureDbInitialized() {
         current_participants INTEGER NOT NULL DEFAULT 0,
         peak_participants INTEGER NOT NULL DEFAULT 0,
         total_joined INTEGER NOT NULL DEFAULT 0,
-        moderator_id INTEGER
+        moderator_id INTEGER,
+        status TEXT DEFAULT 'active'
       )
+    `
+    
+    // Add status column if it doesn't exist (for existing tables)
+    await sql`
+      ALTER TABLE meetings ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active'
     `
     dbInitialized = true
   }
