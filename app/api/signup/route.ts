@@ -1,27 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { hash } from 'bcryptjs'
-import Database from 'better-sqlite3'
-import { join } from 'path'
+import { initDatabase, createUser, getUserByUsername, getUserByEmail } from '@/lib/db'
 
-const dbPath = join(process.cwd(), 'users.db')
-
-function getDb() {
-  const db = new Database(dbPath)
-  
-  // Initialize users table if it doesn't exist
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT UNIQUE NOT NULL,
-      email TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
-      avatar_url TEXT,
-      reset_token TEXT,
-      created_at TEXT NOT NULL
-    )
-  `)
-  
-  return db
+// Initialize database on first request
+let dbInitialized = false
+async function ensureDbInitialized() {
+  if (!dbInitialized) {
+    await initDatabase()
+    dbInitialized = true
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -51,16 +38,15 @@ export async function POST(request: NextRequest) {
       )
     }
     
-    const db = getDb()
+    // Ensure database is initialized
+    await ensureDbInitialized()
     
     // Check if username exists
-    const existingUsername = db.prepare(
-      'SELECT id FROM users WHERE username = ? LIMIT 1'
-    ).get(username)
+    const existingUsername = await getUserByUsername(username)
     
     if (existingUsername) {
       // Generate 3 available username suggestions
-      const suggestions = []
+      const suggestions: string[] = []
       const baseUsername = username.toLowerCase()
       
       // Try different variations until we find 3 available ones
@@ -76,9 +62,7 @@ export async function POST(request: NextRequest) {
         for (const variation of variations) {
           if (suggestions.length >= 3) break
           
-          const exists = db.prepare(
-            'SELECT id FROM users WHERE username = ? LIMIT 1'
-          ).get(variation)
+          const exists = await getUserByUsername(variation)
           
           if (!exists && !suggestions.includes(variation)) {
             suggestions.push(variation)
@@ -86,7 +70,6 @@ export async function POST(request: NextRequest) {
         }
       }
       
-      db.close()
       return NextResponse.json(
         { 
           error: 'This username is already taken. Please choose a different username.',
@@ -97,12 +80,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if email exists
-    const existingEmail = db.prepare(
-      'SELECT id FROM users WHERE email = ? LIMIT 1'
-    ).get(email.toLowerCase())
+    const existingEmail = await getUserByEmail(email.toLowerCase())
     
     if (existingEmail) {
-      db.close()
       return NextResponse.json(
         { error: 'This email address is already registered. Please use a different email or try signing in.' },
         { status: 409 }
@@ -116,25 +96,8 @@ export async function POST(request: NextRequest) {
     const avatarSeed = Math.random().toString(36).substring(7)
     const avatarUrl = `https://api.dicebear.com/8.x/adventurer-neutral/svg?seed=${avatarSeed}`
     
-    // Insert user
-    const result = db.prepare(`
-      INSERT INTO users (username, email, password_hash, avatar_url, created_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(
-      username,
-      email.toLowerCase(),
-      passwordHash,
-      avatarUrl,
-      new Date().toISOString()
-    )
-    
-    // Get created user
-    const user = db.prepare(`
-      SELECT id, username, email, avatar_url, created_at
-      FROM users WHERE id = ?
-    `).get(result.lastInsertRowid)
-    
-    db.close()
+    // Create user
+    const user = await createUser(username, email.toLowerCase(), passwordHash, avatarUrl)
     
     return NextResponse.json({
       message: 'User registered successfully.',
