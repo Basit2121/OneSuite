@@ -37,6 +37,8 @@ export default function MeetingRoom({ params }: { params: Promise<{ meetingId: s
   const [meetingEnded, setMeetingEnded] = useState(false)
   const [userId, setUserId] = useState<string>("")
   const [lastSignalId, setLastSignalId] = useState("0")
+  const [connectedPeers, setConnectedPeers] = useState<Set<string>>(new Set())
+  const [hasAnnounced, setHasAnnounced] = useState(false)
 
   // Authentication check
   useEffect(() => {
@@ -139,7 +141,14 @@ export default function MeetingRoom({ params }: { params: Promise<{ meetingId: s
     const peer = new Peer({
       initiator,
       trickle: false,
-      stream: localStream
+      stream: localStream,
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' }
+        ]
+      }
     })
 
     peer.on('signal', async (signal) => {
@@ -169,7 +178,18 @@ export default function MeetingRoom({ params }: { params: Promise<{ meetingId: s
       })
     })
 
+    peer.on('connect', () => {
+      console.log(`Connected to peer ${remoteUserId}`)
+      setConnectedPeers(prev => new Set(prev).add(remoteUserId))
+    })
+
     peer.on('close', () => {
+      console.log(`Peer ${remoteUserId} connection closed`)
+      setConnectedPeers(prev => {
+        const newSet = new Set(prev)
+        newSet.delete(remoteUserId)
+        return newSet
+      })
       setPeers(prev => {
         const newPeers = new Map(prev)
         newPeers.delete(remoteUserId)
@@ -179,6 +199,11 @@ export default function MeetingRoom({ params }: { params: Promise<{ meetingId: s
 
     peer.on('error', (error) => {
       console.error('Peer connection error:', error)
+      setConnectedPeers(prev => {
+        const newSet = new Set(prev)
+        newSet.delete(remoteUserId)
+        return newSet
+      })
       setPeers(prev => {
         const newPeers = new Map(prev)
         newPeers.delete(remoteUserId)
@@ -204,10 +229,36 @@ export default function MeetingRoom({ params }: { params: Promise<{ meetingId: s
             
             if (existingPeer) {
               // Handle signal for existing peer
-              existingPeer.peer.signal(signal.signal_data)
+              try {
+                existingPeer.peer.signal(signal.signal_data)
+              } catch (error) {
+                console.error('Error processing signal:', error)
+              }
             } else {
-              // Create new peer connection
-              const peer = createPeerConnection(signal.from_user, false)
+              // Create new peer connection only if we don't already have one
+              if (!connectedPeers.has(signal.from_user)) {
+                const peer = createPeerConnection(signal.from_user, false)
+                if (peer) {
+                  setPeers(prev => {
+                    const newPeers = new Map(prev)
+                    newPeers.set(signal.from_user, {
+                      peer,
+                      userId: signal.from_user
+                    })
+                    return newPeers
+                  })
+                  try {
+                    peer.signal(signal.signal_data)
+                  } catch (error) {
+                    console.error('Error processing initial signal:', error)
+                  }
+                }
+              }
+            }
+          } else if (signal.signal_type === 'user-joined') {
+            // Another user joined, initiate connection only if we don't have one
+            if (!connectedPeers.has(signal.from_user) && !peers.has(signal.from_user)) {
+              const peer = createPeerConnection(signal.from_user, true)
               if (peer) {
                 setPeers(prev => {
                   const newPeers = new Map(prev)
@@ -217,22 +268,24 @@ export default function MeetingRoom({ params }: { params: Promise<{ meetingId: s
                   })
                   return newPeers
                 })
-                peer.signal(signal.signal_data)
               }
             }
-          } else if (signal.signal_type === 'user-joined') {
-            // Another user joined, initiate connection
-            const peer = createPeerConnection(signal.from_user, true)
-            if (peer) {
-              setPeers(prev => {
-                const newPeers = new Map(prev)
-                newPeers.set(signal.from_user, {
-                  peer,
-                  userId: signal.from_user
-                })
-                return newPeers
-              })
+          } else if (signal.signal_type === 'user-left') {
+            // User left, cleanup their connection
+            const existingPeer = peers.get(signal.from_user)
+            if (existingPeer) {
+              existingPeer.peer.destroy()
             }
+            setPeers(prev => {
+              const newPeers = new Map(prev)
+              newPeers.delete(signal.from_user)
+              return newPeers
+            })
+            setConnectedPeers(prev => {
+              const newSet = new Set(prev)
+              newSet.delete(signal.from_user)
+              return newSet
+            })
           }
 
           setLastSignalId(signal.id.toString())
@@ -242,32 +295,44 @@ export default function MeetingRoom({ params }: { params: Promise<{ meetingId: s
       }
     }
 
-    // Announce presence
+    // Announce presence only once
     const announcePresence = async () => {
-      try {
-        await api.sendSignal(meetingId, {
-          from_user: userId,
-          signal_type: 'user-joined',
-          signal_data: { username: username || guestName }
-        })
-      } catch (error) {
-        console.error('Error announcing presence:', error)
+      if (!hasAnnounced) {
+        try {
+          await api.sendSignal(meetingId, {
+            from_user: userId,
+            signal_type: 'user-joined',
+            signal_data: { username: username || guestName }
+          })
+          setHasAnnounced(true)
+        } catch (error) {
+          console.error('Error announcing presence:', error)
+        }
       }
     }
 
     // Initial announcement
     announcePresence()
 
-    // Start polling
-    const interval = setInterval(pollSignals, 1000)
+    // Start polling with longer interval to reduce load
+    const interval = setInterval(pollSignals, 2000) // Reduced frequency
     return () => clearInterval(interval)
-  }, [meetingId, userId, localStream, meetingEnded, lastSignalId, peers, username, guestName])
+  }, [meetingId, userId, localStream, meetingEnded, lastSignalId, peers, connectedPeers, username, guestName, hasAnnounced])
 
   const handleLeaveMeeting = async () => {
     try {
+      // Announce leaving to other peers
+      if (userId) {
+        await api.sendSignal(meetingId, {
+          from_user: userId,
+          signal_type: 'user-left',
+          signal_data: { username: username || guestName }
+        })
+      }
+      
       if (meetingId) {
-        const userId = localStorage.getItem("user_id")
-        const userIdNum = userId ? Number(userId) : undefined
+        const storedUserId = localStorage.getItem("user_id")
+        const userIdNum = storedUserId ? Number(storedUserId) : undefined
         await api.leaveMeeting(meetingId, userIdNum)
       }
     } catch (error) {
@@ -278,6 +343,8 @@ export default function MeetingRoom({ params }: { params: Promise<{ meetingId: s
     peers.forEach(peerConnection => {
       peerConnection.peer.destroy()
     })
+    setPeers(new Map())
+    setConnectedPeers(new Set())
     
     // Stop local stream
     if (localStream) {
