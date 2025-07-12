@@ -1,31 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server'
-import Database from 'better-sqlite3'
-import { join } from 'path'
+import { sql } from '@vercel/postgres'
 import crypto from 'crypto'
+import { initDatabase } from '@/lib/db'
 
-const dbPath = join(process.cwd(), 'users.db')
-
-function getDb() {
-  const db = new Database(dbPath)
-  
-  // Initialize meetings table if it doesn't exist
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS meetings (
-      id TEXT PRIMARY KEY,
-      user_id INTEGER,
-      created_at TEXT NOT NULL,
-      ended_at TEXT,
-      duration_seconds INTEGER,
-      current_participants INTEGER NOT NULL DEFAULT 0,
-      peak_participants INTEGER NOT NULL DEFAULT 0,
-      total_joined INTEGER NOT NULL DEFAULT 0,
-      moderator_id INTEGER,
-      FOREIGN KEY(user_id) REFERENCES users(id),
-      FOREIGN KEY(moderator_id) REFERENCES users(id)
-    )
-  `)
-  
-  return db
+// Initialize database on first request
+let dbInitialized = false
+async function ensureDbInitialized() {
+  if (!dbInitialized) {
+    await initDatabase()
+    // Initialize meetings table
+    await sql`
+      CREATE TABLE IF NOT EXISTS meetings (
+        id TEXT PRIMARY KEY,
+        user_id INTEGER,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        ended_at TIMESTAMP WITH TIME ZONE,
+        duration_seconds INTEGER,
+        current_participants INTEGER NOT NULL DEFAULT 0,
+        peak_participants INTEGER NOT NULL DEFAULT 0,
+        total_joined INTEGER NOT NULL DEFAULT 0,
+        moderator_id INTEGER
+      )
+    `
+    dbInitialized = true
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -35,15 +33,16 @@ export async function POST(request: NextRequest) {
     const userId = body.user_id || null
     const createdAt = new Date().toISOString()
     
-    const db = getDb()
+    // Ensure database is initialized
+    await ensureDbInitialized()
     
     // Check if meeting exists
-    const existingMeeting = db.prepare(
-      'SELECT id FROM meetings WHERE id = ?'
-    ).get(meetingId)
+    const existingResult = await sql`
+      SELECT id FROM meetings WHERE id = ${meetingId}
+    `
+    const existingMeeting = existingResult.rows[0]
     
     if (existingMeeting) {
-      db.close()
       return NextResponse.json(
         { error: 'Meeting with this ID already exists.' },
         { status: 409 }
@@ -51,17 +50,16 @@ export async function POST(request: NextRequest) {
     }
     
     // Insert meeting
-    db.prepare(`
+    await sql`
       INSERT INTO meetings (id, user_id, created_at)
-      VALUES (?, ?, ?)
-    `).run(meetingId, userId, createdAt)
+      VALUES (${meetingId}, ${userId}, ${createdAt})
+    `
     
     // Get created meeting
-    const meeting = db.prepare(
-      'SELECT * FROM meetings WHERE id = ?'
-    ).get(meetingId)
-    
-    db.close()
+    const meetingResult = await sql`
+      SELECT * FROM meetings WHERE id = ${meetingId}
+    `
+    const meeting = meetingResult.rows[0]
     
     return NextResponse.json({ meeting }, { status: 201 })
     
@@ -79,20 +77,21 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const userId = searchParams.get('user_id')
     
-    const db = getDb()
+    // Ensure database is initialized
+    await ensureDbInitialized()
     
     let meetings
     if (userId) {
-      meetings = db.prepare(
-        'SELECT * FROM meetings WHERE user_id = ? ORDER BY created_at DESC'
-      ).all(userId)
+      const result = await sql`
+        SELECT * FROM meetings WHERE user_id = ${userId} ORDER BY created_at DESC
+      `
+      meetings = result.rows
     } else {
-      meetings = db.prepare(
-        'SELECT * FROM meetings ORDER BY created_at DESC'
-      ).all()
+      const result = await sql`
+        SELECT * FROM meetings ORDER BY created_at DESC
+      `
+      meetings = result.rows
     }
-    
-    db.close()
     
     return NextResponse.json({ meetings })
     

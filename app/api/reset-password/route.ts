@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { hash } from 'bcryptjs'
-import Database from 'better-sqlite3'
-import { join } from 'path'
+import { sql } from '@vercel/postgres'
+import { initDatabase } from '@/lib/db'
 
-const dbPath = join(process.cwd(), 'users.db')
-
-function getDb() {
-  return new Database(dbPath)
+// Initialize database on first request
+let dbInitialized = false
+async function ensureDbInitialized() {
+  if (!dbInitialized) {
+    await initDatabase()
+    dbInitialized = true
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -27,14 +30,15 @@ export async function POST(request: NextRequest) {
       )
     }
     
-    const db = getDb()
+    // Ensure database is initialized
+    await ensureDbInitialized()
     
-    const user = db.prepare(
-      'SELECT id FROM users WHERE reset_token = ?'
-    ).get(token)
+    const result = await sql`
+      SELECT id FROM users WHERE reset_token = ${token}
+    `
+    const user = result.rows[0]
     
     if (!user) {
-      db.close()
       return NextResponse.json(
         { error: 'Invalid or expired reset token.' },
         { status: 400 }
@@ -43,11 +47,9 @@ export async function POST(request: NextRequest) {
     
     const passwordHash = await hash(password, 12)
     
-    db.prepare(
-      'UPDATE users SET password_hash = ?, reset_token = NULL WHERE id = ?'
-    ).run(passwordHash, user.id)
-    
-    db.close()
+    await sql`
+      UPDATE users SET password_hash = ${passwordHash}, reset_token = NULL WHERE id = ${user.id}
+    `
     
     return NextResponse.json({
       message: 'Password updated successfully.'

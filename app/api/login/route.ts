@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { compare } from 'bcryptjs'
-import Database from 'better-sqlite3'
-import { join } from 'path'
+import { sql } from '@vercel/postgres'
+import { initDatabase } from '@/lib/db'
 
-const dbPath = join(process.cwd(), 'users.db')
-
-function getDb() {
-  return new Database(dbPath)
+// Initialize database on first request
+let dbInitialized = false
+async function ensureDbInitialized() {
+  if (!dbInitialized) {
+    await initDatabase()
+    dbInitialized = true
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -26,31 +29,19 @@ export async function POST(request: NextRequest) {
       )
     }
     
-    const db = getDb()
-    
-    // Initialize database schema if needed
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE NOT NULL,
-        email TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        avatar_url TEXT,
-        reset_token TEXT,
-        created_at TEXT NOT NULL
-      )
-    `)
+    // Ensure database is initialized
+    await ensureDbInitialized()
     
     console.log('Looking for user with email:', email.toLowerCase())
     
-    const user = db.prepare(
-      'SELECT * FROM users WHERE email = ? LIMIT 1'
-    ).get(email.toLowerCase())
+    const result = await sql`
+      SELECT * FROM users WHERE email = ${email.toLowerCase()} LIMIT 1
+    `
+    const user = result.rows[0]
     
     console.log('User found:', !!user)
     
     if (!user) {
-      db.close()
       return NextResponse.json(
         { error: 'Invalid email or password.' },
         { status: 401 }
@@ -60,8 +51,6 @@ export async function POST(request: NextRequest) {
     console.log('Comparing password with hash')
     const passwordMatch = await compare(password, user.password_hash)
     console.log('Password match:', passwordMatch)
-    
-    db.close()
     
     if (!passwordMatch) {
       return NextResponse.json(
@@ -82,7 +71,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Login error:', error)
     return NextResponse.json(
-      { error: 'Internal server error', details: error.message },
+      { error: 'Internal server error', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
     )
   }

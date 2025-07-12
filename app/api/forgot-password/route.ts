@@ -1,20 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
-import Database from 'better-sqlite3'
-import { join } from 'path'
+import { sql } from '@vercel/postgres'
 import crypto from 'crypto'
 import nodemailer from 'nodemailer'
+import { initDatabase } from '@/lib/db'
 
-const dbPath = join(process.cwd(), 'users.db')
-
-function getDb() {
-  return new Database(dbPath)
+// Initialize database on first request
+let dbInitialized = false
+async function ensureDbInitialized() {
+  if (!dbInitialized) {
+    await initDatabase()
+    dbInitialized = true
+  }
 }
 
 async function sendResetEmail(email: string, token: string) {
   const frontendBaseUrl = process.env.FRONTEND_BASE_URL || 'http://localhost:3000'
   const resetLink = `${frontendBaseUrl}/reset-password?token=${token}`
   
-  const transporter = nodemailer.createTransporter({
+  const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
       user: process.env.SMTP_EMAIL || 'basitm5555@gmail.com',
@@ -56,11 +59,13 @@ export async function POST(request: NextRequest) {
       )
     }
     
-    const db = getDb()
+    // Ensure database is initialized
+    await ensureDbInitialized()
     
-    const user = db.prepare(
-      'SELECT id FROM users WHERE email = ?'
-    ).get(email.toLowerCase())
+    const result = await sql`
+      SELECT id FROM users WHERE email = ${email.toLowerCase()}
+    `
+    const user = result.rows[0]
     
     if (!user) {
       // Always return generic message to avoid account enumeration
@@ -71,11 +76,9 @@ export async function POST(request: NextRequest) {
     
     const token = crypto.randomBytes(32).toString('base64url')
     
-    db.prepare(
-      'UPDATE users SET reset_token = ? WHERE id = ?'
-    ).run(token, user.id)
-    
-    db.close()
+    await sql`
+      UPDATE users SET reset_token = ${token} WHERE id = ${user.id}
+    `
     
     // Send email
     await sendResetEmail(email.toLowerCase(), token)

@@ -1,12 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
-import Database from 'better-sqlite3'
-import { join } from 'path'
+import { sql } from '@vercel/postgres'
+import { initDatabase } from '@/lib/db'
 
-const dbPath = join(process.cwd(), 'users.db')
-
-function getDb() {
-  return new Database(dbPath)
+// Initialize database on first request
+let dbInitialized = false
+async function ensureDbInitialized() {
+  if (!dbInitialized) {
+    await initDatabase()
+    dbInitialized = true
+  }
 }
+
+
 
 export async function POST(
   request: NextRequest,
@@ -16,14 +21,15 @@ export async function POST(
     const { meetingId } = params
     const endedAt = new Date().toISOString()
     
-    const db = getDb()
+    // Ensure database is initialized
+    await ensureDbInitialized()
     
-    const meeting = db.prepare(
-      'SELECT * FROM meetings WHERE id = ?'
-    ).get(meetingId)
+    const result = await sql`
+      SELECT * FROM meetings WHERE id = ${meetingId}
+    `
+    const meeting = result.rows[0]
     
     if (!meeting) {
-      db.close()
       return NextResponse.json(
         { error: 'Meeting not found.' },
         { status: 404 }
@@ -41,19 +47,18 @@ export async function POST(
       }
     }
     
-    db.prepare(`
+    await sql`
       UPDATE meetings SET 
-      ended_at = ?, 
-      duration_seconds = ?, 
+      ended_at = ${endedAt}, 
+      duration_seconds = ${durationSeconds}, 
       current_participants = 0 
-      WHERE id = ?
-    `).run(endedAt, durationSeconds, meetingId)
+      WHERE id = ${meetingId}
+    `
     
-    const updatedMeeting = db.prepare(
-      'SELECT * FROM meetings WHERE id = ?'
-    ).get(meetingId)
-    
-    db.close()
+    const updatedResult = await sql`
+      SELECT * FROM meetings WHERE id = ${meetingId}
+    `
+    const updatedMeeting = updatedResult.rows[0]
     
     return NextResponse.json({ meeting: updatedMeeting })
     

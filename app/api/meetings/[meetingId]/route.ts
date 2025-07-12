@@ -1,12 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
-import Database from 'better-sqlite3'
-import { join } from 'path'
+import { sql } from '@vercel/postgres'
+import { initDatabase } from '@/lib/db'
 
-const dbPath = join(process.cwd(), 'users.db')
-
-function getDb() {
-  return new Database(dbPath)
+// Initialize database on first request
+let dbInitialized = false
+async function ensureDbInitialized() {
+  if (!dbInitialized) {
+    await initDatabase()
+    dbInitialized = true
+  }
 }
+
+
 
 export async function GET(
   request: NextRequest,
@@ -15,13 +20,13 @@ export async function GET(
   try {
     const { meetingId } = params
     
-    const db = getDb()
+    // Ensure database is initialized
+    await ensureDbInitialized()
     
-    const meeting = db.prepare(
-      'SELECT * FROM meetings WHERE id = ?'
-    ).get(meetingId)
-    
-    db.close()
+    const result = await sql`
+      SELECT * FROM meetings WHERE id = ${meetingId}
+    `
+    const meeting = result.rows[0]
     
     if (!meeting) {
       return NextResponse.json(

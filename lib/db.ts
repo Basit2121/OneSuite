@@ -1,5 +1,8 @@
 import { sql } from '@vercel/postgres';
 
+// Use the Neon database connection
+const connectionString = process.env.POSTGRES_URL || process.env.DATABASE_URL;
+
 export async function initDatabase() {
   try {
     // Create users table if it doesn't exist
