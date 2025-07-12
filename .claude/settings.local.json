@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p \"C:\\Users\\basit\\Desktop\\register-page\\app\\api\")",
+      "Bash(cd \"C:\\Users\\basit\\Desktop\\register-page\")",
+      "Bash(npm install bcryptjs better-sqlite3 nodemailer @types/bcryptjs @types/nodemailer)",
+      "Bash(npm install bcryptjs better-sqlite3 nodemailer @types/bcryptjs @types/nodemailer --legacy-peer-deps)",
+      "Bash(rm -rf \"Flask Backend\")",
+      "Bash(rm register-page.tsx)",
+      "Bash(rm -rf styles)",
+      "Bash(rm -rf hooks)",
+      "Bash(rm pnpm-lock.yaml)",
+      "Bash(rmdir types)",
+      "Bash(npm run build)",
+      "Bash(rm -rf .next)",
+      "Bash(npm run dev)"
+    ],
+    "deny": []
+  }
+}
