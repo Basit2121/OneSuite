@@ -47,8 +47,11 @@ export const api = {
   // Meetings -----------------------------------------------------------
   createMeeting: (payload?: { id?: string; user_id?: number }) =>
     request("/api/meetings", { method: "POST", json: payload || {} }),
-  joinMeeting: (id: string, user_id?: number) =>
-    request(`/api/meetings/${id}/join`, { method: "POST", json: user_id ? { user_id } : {} }),
+  joinMeeting: (id: string, user_id?: number, guest_name?: string) =>
+    request(`/api/meetings/${id}/join`, { 
+      method: "POST", 
+      json: user_id ? { user_id } : guest_name ? { guest_name } : {} 
+    }),
   leaveMeeting: (id: string, user_id?: number) =>
     request(`/api/meetings/${id}/leave`, { method: "POST", json: user_id ? { user_id } : {} }),
   endMeeting: (id: string) =>

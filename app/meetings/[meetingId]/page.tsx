@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation"
 import { api } from "@/lib/api"
 import { toast } from "@/hooks/use-toast"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Mic, MicOff, Video, VideoOff, PhoneOff, Users } from "lucide-react"
 import Peer from "simple-peer"
 
@@ -29,13 +31,16 @@ export default function MeetingRoom({ params }: { params: Promise<{ meetingId: s
     is_new_moderator: boolean
   } | null>(null)
   const [username, setUsername] = useState<string>("")
+  const [isGuest, setIsGuest] = useState(false)
+  const [guestName, setGuestName] = useState("")
+  const [showGuestForm, setShowGuestForm] = useState(false)
 
   // Authentication check
   useEffect(() => {
     if (typeof window !== "undefined") {
       const storedUsername = localStorage.getItem("username")
       if (!storedUsername) {
-        router.push("/signin")
+        setShowGuestForm(true)
         return
       }
       setUsername(storedUsername)
@@ -45,11 +50,15 @@ export default function MeetingRoom({ params }: { params: Promise<{ meetingId: s
   // Join meeting and get moderator status
   useEffect(() => {
     const joinMeetingAndGetStatus = async () => {
-      if (meetingId && username) {
+      if (meetingId && (username || (isGuest && guestName))) {
         try {
           const userId = localStorage.getItem("user_id")
           const userIdNum = userId ? Number(userId) : undefined
-          const response = await api.joinMeeting(meetingId, userIdNum)
+          const response = await api.joinMeeting(
+            meetingId, 
+            isGuest ? undefined : userIdNum, 
+            isGuest ? guestName : undefined
+          )
           setModeratorStatus({
             is_moderator: response.is_moderator || false,
             is_new_moderator: response.is_new_moderator || false
@@ -69,11 +78,11 @@ export default function MeetingRoom({ params }: { params: Promise<{ meetingId: s
     }
 
     joinMeetingAndGetStatus()
-  }, [meetingId, username])
+  }, [meetingId, username, isGuest, guestName])
 
   // Initialize media stream
   useEffect(() => {
-    if (typeof window === "undefined" || !meetingId || !moderatorStatus || !username) return
+    if (typeof window === "undefined" || !meetingId || !moderatorStatus || !(username || (isGuest && guestName))) return
 
     const initializeMedia = async () => {
       try {
@@ -107,7 +116,7 @@ export default function MeetingRoom({ params }: { params: Promise<{ meetingId: s
         localStream.getTracks().forEach(track => track.stop())
       }
     }
-  }, [meetingId, moderatorStatus, username])
+  }, [meetingId, moderatorStatus, username, isGuest, guestName])
 
   const handleLeaveMeeting = async () => {
     try {
@@ -131,6 +140,14 @@ export default function MeetingRoom({ params }: { params: Promise<{ meetingId: s
     }
     
     router.push('/meetings')
+  }
+
+  const handleGuestJoin = () => {
+    if (guestName.trim()) {
+      setIsGuest(true)
+      setUsername(guestName)
+      setShowGuestForm(false)
+    }
   }
 
   const toggleAudio = () => {
@@ -171,6 +188,38 @@ export default function MeetingRoom({ params }: { params: Promise<{ meetingId: s
     }
   }, [meetingId])
 
+  if (!username && showGuestForm) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-gray-50">
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <CardTitle>Join Meeting as Guest</CardTitle>
+            <p className="text-sm text-gray-600">Enter your name to join the meeting</p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <Input
+                type="text"
+                placeholder="Your name"
+                value={guestName}
+                onChange={(e) => setGuestName(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleGuestJoin()}
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button onClick={handleGuestJoin} className="flex-1" disabled={!guestName.trim()}>
+                Join Meeting
+              </Button>
+              <Button variant="outline" onClick={() => router.push("/signin")} className="flex-1">
+                Sign In Instead
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
   if (!username) {
     return (
       <div className="flex h-screen w-screen items-center justify-center">
@@ -205,7 +254,7 @@ export default function MeetingRoom({ params }: { params: Promise<{ meetingId: s
             className="w-full h-full object-cover"
           />
           <div className="absolute bottom-2 left-2 text-white text-sm bg-black/50 px-2 py-1 rounded">
-            You
+            {isGuest ? guestName : "You"}
           </div>
         </div>
         

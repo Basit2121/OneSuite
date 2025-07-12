@@ -21,6 +21,7 @@ export async function POST(
     const { meetingId } = params
     const body = await request.json().catch(() => ({}))
     const userId = body.user_id || null
+    const guestName = body.guest_name || null
     
     // Ensure database is initialized
     await ensureDbInitialized()
@@ -45,8 +46,8 @@ export async function POST(
     let moderatorId = meeting.moderator_id
     let isNewModerator = false
     
-    if (total === 1 && userId && !moderatorId) {
-      moderatorId = userId
+    if (total === 1 && (userId || guestName) && !moderatorId) {
+      moderatorId = userId || `guest_${guestName}_${Date.now()}`
       isNewModerator = true
       await sql`
         UPDATE meetings SET 
@@ -71,7 +72,7 @@ export async function POST(
       total_joined: total,
       peak_participants: peak,
       moderator_id: moderatorId,
-      is_moderator: userId === moderatorId,
+      is_moderator: (userId && userId === moderatorId) || (!userId && moderatorId && moderatorId.includes(`guest_${guestName}`)),
       is_new_moderator: isNewModerator
     })
     
