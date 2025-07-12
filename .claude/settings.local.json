@@ -18,7 +18,8 @@
       "Bash(git commit -m \"$(cat <<''EOF''\nfeat: implement complete WebRTC video calling with guest access\n\n- Add guest user support for joining meetings without accounts\n- Implement WebRTC signaling server with database persistence\n- Add real-time peer-to-peer video connections between participants\n- Include copy invite URL button for easy meeting sharing\n- Add moderator controls to end meetings with auto-disconnect\n- Support both registered users and guest participants\n- Implement automatic peer discovery and connection management\n\n🤖 Generated with [Claude Code](https://claude.ai/code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
       "Bash(git push origin main)",
       "Bash(vercel --version)",
-      "Bash(vercel --prod)"
+      "Bash(vercel --prod)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nfix: improve WebRTC connection stability and prevent reconnection loops\n\n- Add STUN servers for better NAT traversal\n- Implement connection state tracking to prevent duplicate peers\n- Add proper error handling and signal processing\n- Reduce polling frequency to decrease server load\n- Add user-left signaling for proper cleanup\n- Prevent announcement loops with hasAnnounced flag\n- Improve peer cleanup on connection errors\n\n🤖 Generated with [Claude Code](https://claude.ai/code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")"
     ],
     "deny": []
   }
