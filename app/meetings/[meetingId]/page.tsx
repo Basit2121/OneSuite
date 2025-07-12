@@ -35,6 +35,8 @@ export default function MeetingRoom({ params }: { params: Promise<{ meetingId: s
   const [guestName, setGuestName] = useState("")
   const [showGuestForm, setShowGuestForm] = useState(false)
   const [meetingEnded, setMeetingEnded] = useState(false)
+  const [userId, setUserId] = useState<string>("")
+  const [lastSignalId, setLastSignalId] = useState("0")
 
   // Authentication check
   useEffect(() => {
@@ -45,8 +47,19 @@ export default function MeetingRoom({ params }: { params: Promise<{ meetingId: s
         return
       }
       setUsername(storedUsername)
+      
+      // Set user ID for signaling
+      const storedUserId = localStorage.getItem("user_id")
+      setUserId(storedUserId || `guest_${Date.now()}`)
     }
   }, [router])
+
+  // Set guest user ID
+  useEffect(() => {
+    if (isGuest && guestName && !userId) {
+      setUserId(`guest_${guestName}_${Date.now()}`)
+    }
+  }, [isGuest, guestName, userId])
 
   // Join meeting and get moderator status
   useEffect(() => {
@@ -118,6 +131,137 @@ export default function MeetingRoom({ params }: { params: Promise<{ meetingId: s
       }
     }
   }, [meetingId, moderatorStatus, username, isGuest, guestName])
+
+  // WebRTC peer connection management
+  const createPeerConnection = (remoteUserId: string, initiator: boolean) => {
+    if (!localStream) return null
+
+    const peer = new Peer({
+      initiator,
+      trickle: false,
+      stream: localStream
+    })
+
+    peer.on('signal', async (signal) => {
+      try {
+        await api.sendSignal(meetingId, {
+          from_user: userId,
+          to_user: remoteUserId,
+          signal_type: 'webrtc-signal',
+          signal_data: signal
+        })
+      } catch (error) {
+        console.error('Error sending signal:', error)
+      }
+    })
+
+    peer.on('stream', (stream) => {
+      setPeers(prev => {
+        const newPeers = new Map(prev)
+        const existingPeer = newPeers.get(remoteUserId)
+        if (existingPeer) {
+          newPeers.set(remoteUserId, {
+            ...existingPeer,
+            stream
+          })
+        }
+        return newPeers
+      })
+    })
+
+    peer.on('close', () => {
+      setPeers(prev => {
+        const newPeers = new Map(prev)
+        newPeers.delete(remoteUserId)
+        return newPeers
+      })
+    })
+
+    peer.on('error', (error) => {
+      console.error('Peer connection error:', error)
+      setPeers(prev => {
+        const newPeers = new Map(prev)
+        newPeers.delete(remoteUserId)
+        return newPeers
+      })
+    })
+
+    return peer
+  }
+
+  // Signal polling for WebRTC
+  useEffect(() => {
+    if (!meetingId || !userId || !localStream || meetingEnded) return
+
+    const pollSignals = async () => {
+      try {
+        const response = await api.getSignals(meetingId, userId, lastSignalId)
+        const signals = response.signals || []
+
+        for (const signal of signals) {
+          if (signal.signal_type === 'webrtc-signal') {
+            const existingPeer = peers.get(signal.from_user)
+            
+            if (existingPeer) {
+              // Handle signal for existing peer
+              existingPeer.peer.signal(signal.signal_data)
+            } else {
+              // Create new peer connection
+              const peer = createPeerConnection(signal.from_user, false)
+              if (peer) {
+                setPeers(prev => {
+                  const newPeers = new Map(prev)
+                  newPeers.set(signal.from_user, {
+                    peer,
+                    userId: signal.from_user
+                  })
+                  return newPeers
+                })
+                peer.signal(signal.signal_data)
+              }
+            }
+          } else if (signal.signal_type === 'user-joined') {
+            // Another user joined, initiate connection
+            const peer = createPeerConnection(signal.from_user, true)
+            if (peer) {
+              setPeers(prev => {
+                const newPeers = new Map(prev)
+                newPeers.set(signal.from_user, {
+                  peer,
+                  userId: signal.from_user
+                })
+                return newPeers
+              })
+            }
+          }
+
+          setLastSignalId(signal.id.toString())
+        }
+      } catch (error) {
+        console.error('Error polling signals:', error)
+      }
+    }
+
+    // Announce presence
+    const announcePresence = async () => {
+      try {
+        await api.sendSignal(meetingId, {
+          from_user: userId,
+          signal_type: 'user-joined',
+          signal_data: { username: username || guestName }
+        })
+      } catch (error) {
+        console.error('Error announcing presence:', error)
+      }
+    }
+
+    // Initial announcement
+    announcePresence()
+
+    // Start polling
+    const interval = setInterval(pollSignals, 1000)
+    return () => clearInterval(interval)
+  }, [meetingId, userId, localStream, meetingEnded, lastSignalId, peers, username, guestName])
 
   const handleLeaveMeeting = async () => {
     try {

@@ -60,4 +60,10 @@ export const api = {
   listMeetings: (userId?: number) =>
     request(userId ? `/api/meetings?user_id=${userId}` : "/api/meetings", { method: "GET" }),
   getMeeting: (id: string) => request(`/api/meetings/${id}`, { method: "GET" }),
-} 
+
+  // WebRTC Signaling
+  sendSignal: (meetingId: string, signal: { from_user: string; to_user?: string; signal_type: string; signal_data: any }) =>
+    request(`/api/meetings/${meetingId}/signal`, { method: "POST", json: signal }),
+  getSignals: (meetingId: string, userId: string, lastId?: string) =>
+    request(`/api/meetings/${meetingId}/signal?user_id=${userId}${lastId ? `&last_id=${lastId}` : ''}`, { method: "GET" }),
+}
